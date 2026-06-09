@@ -1,0 +1,83 @@
+# Azure DevOps CI/CD Pipeline fuer Git Mirror Backup
+# Build, Test und Docker Image erstellen + pushen
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+
+pr:
+  branches:
+    include:
+      - main
+
+variables:
+  dockerRegistryServiceConnection: 'docker-registry-connection'
+  imageRepository: 'git-mirror-backup'
+  containerRegistry: '$(CONTAINER_REGISTRY)'
+  dockerfilePath: '$(Build.SourcesDirectory)/Dockerfile'
+  tag: '$(Build.BuildId)'
+  nodeVersion: '22.x'
+
+stages:
+  # Stage 1: Build und Lint
+  - stage: Build
+    displayName: 'Build & Lint'
+    jobs:
+      - job: BuildAndLint
+        displayName: 'Install, Lint, Build'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: NodeTool@0
+            displayName: 'Node.js installieren'
+            inputs:
+              versionSpec: '$(nodeVersion)'
+
+          - script: npm ci
+            displayName: 'Abhaengigkeiten installieren'
+
+          - script: npm run lint
+            displayName: 'Lint ausfuehren'
+
+          - script: npx tsc -b
+            displayName: 'TypeScript pruefen'
+
+          - script: npm run build
+            displayName: 'Produktions-Build erstellen'
+            env:
+              VITE_SUPABASE_URL: $(VITE_SUPABASE_URL)
+              VITE_SUPABASE_ANON_KEY: $(VITE_SUPABASE_ANON_KEY)
+              VITE_ORG_NAME: $(VITE_ORG_NAME)
+
+          - publish: $(Build.SourcesDirectory)/dist
+            artifact: dist
+            displayName: 'Build-Artefakte publizieren'
+
+  # Stage 2: Docker Image bauen und pushen
+  - stage: Docker
+    displayName: 'Docker Image'
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: DockerBuildPush
+        displayName: 'Docker Build & Push'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: Docker@2
+            displayName: 'Docker Image bauen und pushen'
+            inputs:
+              containerRegistry: '$(dockerRegistryServiceConnection)'
+              repository: '$(imageRepository)'
+              command: 'buildAndPush'
+              Dockerfile: '$(dockerfilePath)'
+              buildContext: '$(Build.SourcesDirectory)'
+              tags: |
+                $(tag)
+                latest
+              arguments: |
+                --build-arg VITE_SUPABASE_URL=$(VITE_SUPABASE_URL)
+                --build-arg VITE_SUPABASE_ANON_KEY=$(VITE_SUPABASE_ANON_KEY)
+                --build-arg VITE_ORG_NAME=$(VITE_ORG_NAME)

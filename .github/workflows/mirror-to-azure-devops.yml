@@ -1,0 +1,43 @@
+name: Mirror GitHub to Azure DevOps
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push to Azure DevOps
+        env:
+          AZURE_DEVOPS_USERNAME: ${{ vars.AZURE_DEVOPS_USERNAME || 'steffen.mueller@m-s.ch' }}
+          AZURE_DEVOPS_PAT: ${{ secrets.AZURE_DEVOPS_PAT }}
+          AZURE_DEVOPS_ORG: ${{ vars.AZURE_DEVOPS_ORG || 'M-S' }}
+          AZURE_DEVOPS_PROJECT: ${{ vars.AZURE_DEVOPS_PROJECT || 'Technologie' }}
+          AZURE_DEVOPS_REPO: ${{ vars.AZURE_DEVOPS_REPO || 'DevOps-Git-MirrorUI' }}
+        run: |
+          set -euo pipefail
+
+          echo "Azure DevOps mirror workflow version: v4-force-main"
+
+          if [ -z "${AZURE_DEVOPS_PAT}" ]; then
+            echo "AZURE_DEVOPS_PAT secret is not set. Add it in GitHub repository secrets."
+            exit 1
+          fi
+
+          azure_url="https://dev.azure.com/${AZURE_DEVOPS_ORG}/${AZURE_DEVOPS_PROJECT}/_git/${AZURE_DEVOPS_REPO}"
+          auth_header="AUTHORIZATION: basic $(printf '%s:%s' "${AZURE_DEVOPS_USERNAME}" "${AZURE_DEVOPS_PAT}" | base64 -w 0)"
+
+          git config --global --add "http.https://dev.azure.com/.extraheader" "${auth_header}"
+          git remote add azure "${azure_url}"
+
+          git push azure +refs/heads/main:refs/heads/main
+          git push azure --tags --force
